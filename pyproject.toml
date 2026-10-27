@@ -24,7 +24,13 @@ dependencies = [
 # 钉回 1.0.2（断言 (1,0)，与 jni 1.0.0 同期），回到 flet 0.86.5 发布时的组合。
 # 这里只写一个键：flet 按 section 内 update() 合并，模板的 flet/jni/screen_retriever
 # 三个 override 会保留（build_base.py:1692-1700）。
+#
+# 2026-10-27 补：干净树首次构建时 pub 会重新解析，shared_preferences 拉到
+# shared_preferences_android 2.5.x，它直接依赖 jni ^1.1.0，与钉死的 jni 1.0.0
+# 撞出同一个 G8388A750（生成代码断言 JniVersionCheck(1,1)）。
+# 2.4.28 是最后一个不带 jni 依赖的版本，facade 的约束是 ^2.3.4，钉它不影响解析。
 jni_flutter = "1.0.2"
+shared_preferences_android = "2.4.28"
 
 [tool.flet.app]
 # 入口：仓库根下的 FVPTachieComposerFlet.py（默认找 main.py）
@@ -48,8 +54,11 @@ exclude = [
     "BUILD.md",
     "TESTING.md",
     "README.md",
+    "CONTRIBUTING.md",
+    "RELEASING.md",
     "run_hot.py",
     "build_win.ps1",
+    "build_flet_win.ps1",
     "FVPTachieComposer.win.spec",
 ]
 
