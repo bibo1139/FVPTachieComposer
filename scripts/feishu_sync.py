@@ -20,10 +20,12 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -212,11 +214,43 @@ def idempotency_key(manifest_id: str, salt: str = "") -> str:
 
 
 # ── lark-cli 封装 ───────────────────────────────────────────────────────
+def _spill_json(args: list[str]) -> tuple[list[str], Optional[Path]]:
+    """把长载荷（`--json` / `--content` / `--markdown`）写进临时文件、改用 `@path` 传。
+
+    Windows 上 lark-cli 是 npm 的 .cmd 垫片，参数要过一遍 cmd.exe：JSON 里
+    的 `%LOCALAPPDATA%` 会被当成环境变量展开，展开后的 `C:\\Users\\...` 再
+    变成非法转义（"invalid character 'U' in string escape code"），整批写入
+    就失败了。文件传递绕开命令行的变量展开与引号规则。
+    """
+    for flag in ("--json", "--content", "--markdown"):
+        if flag in args:
+            break
+    else:
+        return args, None
+    idx = args.index(flag)
+    payload = args[idx + 1]
+    if payload.startswith("@"):
+        return args, None
+    fd, name = tempfile.mkstemp(prefix="fvp-feishu-", suffix=".json")
+    path = Path(name)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(payload)
+    spilled = list(args)
+    spilled[idx + 1] = "@" + str(path)
+    return spilled, path
+
+
 def run_lark(args: list[str]) -> dict:
     exe = shutil.which("lark-cli")
     if not exe:
         raise SyncError("找不到 lark-cli（先按 lark-shared 的说明登录）")
-    proc = subprocess.run([exe, *args], capture_output=True, text=True, encoding="utf-8")
+    args, scratch = _spill_json(args)
+    try:
+        proc = subprocess.run([exe, *args], capture_output=True, text=True,
+                              encoding="utf-8")
+    finally:
+        if scratch is not None:
+            scratch.unlink(missing_ok=True)
     if proc.returncode != 0:
         detail = (proc.stdout or proc.stderr).strip().replace("\n", " ")[:500]
         raise SyncError(f"lark-cli 失败 (exit {proc.returncode}): {detail}")
@@ -238,8 +272,8 @@ class Lark:
         self.notify = config.get("notify") or {}
         self._run = runner or run_lark
 
-    def call(self, args: list[str]) -> dict:
-        full = [*args, "--as", self.identity]
+    def call(self, args: list[str], identity: Optional[str] = None) -> dict:
+        full = [*args, "--as", identity or self.identity]
         if "--json" not in args:
             full += ["--format", "json"]
         return self._run(full)
@@ -270,10 +304,16 @@ class Lark:
         return list((resp.get("data") or {}).get("record_id_list") or [])
 
     def send_markdown(self, chat_id: str, text: str, key: str) -> str:
+        # `--markdown` 在 CLI 内部要先做样式优化（含图片解析），这一步走 user
+        # 身份，缺 im:message.send_as_user 时连 bot 身份都发不出去；改成自己拼
+        # post 内容、用 bot 身份直发，渲染结果一样（md 段 + 原生 <at> 标签）。
+        content = json.dumps({"zh_cn": {"content": [[{"tag": "md", "text": text}]]}},
+                             ensure_ascii=False)
         resp = self.call(["im", "+messages-send",
                           "--chat-id", chat_id,
-                          "--markdown", text,
-                          "--idempotency-key", key])
+                          "--msg-type", "post",
+                          "--content", content,
+                          "--idempotency-key", key], identity="bot")
         return str((resp.get("data") or {}).get("message_id") or "")
 
 

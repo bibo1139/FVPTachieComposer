@@ -95,9 +95,10 @@ class Fake:
             ids = ["recNEWTEST"] if table == "tblTESTS" else ["recNEWCHANGE"]
             return {"ok": True, "data": {"record_id_list": ids}}
         if "+messages-send" in args:
+            content = json.loads(args[args.index("--content") + 1])
             self.messages.append({
                 "chat_id": args[args.index("--chat-id") + 1],
-                "text": args[args.index("--markdown") + 1],
+                "text": content["zh_cn"]["content"][0][0]["text"],
                 "key": args[args.index("--idempotency-key") + 1],
             })
             return {"ok": True, "data": {"message_id": "om_test"}}
